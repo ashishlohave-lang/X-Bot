@@ -18,6 +18,10 @@ const { generatePKCE, buildAuthorizeUrl, exchangeCodeForTokens } = require("./oa
 const { createTokenStore } = require("./tokens/tokenStore");
 const { createTokenService } = require("./tokens/tokenService");
 
+const { createXApiClient } = require("./xapi/client");
+const { createWebhookRouter } = require("./webhooks/webhookHandler");
+const replyLogic = require("./bot/replyLogic");
+
 const logger = createLogger();
 const config = getConfig();
 
@@ -30,15 +34,6 @@ app.use(
   cors({
     origin: config.corsOrigin === "*" ? true : config.corsOrigin,
     credentials: true,
-  })
-);
-
-app.use(
-  rateLimit({
-    windowMs: config.rateLimitWindowMs,
-    max: config.rateLimitMax,
-    standardHeaders: true,
-    legacyHeaders: false,
   })
 );
 
@@ -70,6 +65,26 @@ const tokenFileAbs = path.isAbsolute(config.tokenFile) ? config.tokenFile : path
 const pkceStore = createPkceStore({ file: pkceFileAbs, logger });
 const tokenStore = createTokenStore({ file: tokenFileAbs, encryptionKey: config.encryptionKey, logger });
 const tokenService = createTokenService({ config, tokenStore, logger });
+
+const xapiClient = createXApiClient({ tokenService, logger });
+const webhookRouter = createWebhookRouter({
+  config,
+  tokenService,
+  xapiClient,
+  replyLogic,
+  logger,
+});
+// Webhook before rate limit so X's GET (CRC) and POST (events) are not blocked
+app.use(config.webhookPath, webhookRouter);
+
+app.use(
+  rateLimit({
+    windowMs: config.rateLimitWindowMs,
+    max: config.rateLimitMax,
+    standardHeaders: true,
+    legacyHeaders: false,
+  })
+);
 
 setInterval(() => pkceStore.cleanupExpired().catch(() => {}), 60_000);
 
